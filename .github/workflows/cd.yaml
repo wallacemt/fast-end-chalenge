@@ -1,42 +1,28 @@
-name: fast-cd
+name: CD - Deploy to Swarm
 
 on:
-  workflow_dispatch:
-    inputs:
-      environment:
-        type: choice
-        description: 'Ambiente de deployment'
-        required: true
-        options: 
-        - dev
-        - prod
-      imageTag:
-        required: true
-        description: 'Deployment image tag'
-        default: 'latest'
+  workflow_run:
+    workflows: ["CI - Build & Push"]
+    types: [completed]
 
 jobs:
-  deployment:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    env: 
-      HOST_ENV: ${{ github.event.inputs.environment == 'prod' && '54.237.212.2' || '13.218.60.131' }}
-      SSH_USER: "root"
-      SSH_PORT: 22
     steps:
-      - run: |
-          echo "Ambiente de deployment: ${{github.event.inputs.environment}}"
-          echo "Tag da imagem: ${{github.event.inputs.imageTag}}"
+      - uses: actions/checkout@v4
 
-      - name: Deployment Service
-        uses: appleboy/ssh-action@v1.0.3
-        with: 
-          host: "${{env.HOST_ENV}}"
-          username: "${{env.SSH_USER}}"
-          key: "${{secrets.SSH_KEY}}"
-          port: "${{env.SSH_PORT}}"
-          script: |
-            sudo mkdir -p /fast-end-ch
-            sudo docker service rm fast-end-ch | true
-            sudo docker service create --name fast-end-ch --replicas=3 -p 80:3000 \
-            --mount type=bind,source=/fast-end-ch,destination=/etc/todos \
-            wallacestm/fast-end-ch:${{ github.event.inputs.imageTag }}
+      - name: Setup SSH
+        run: |
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
+      - name: Deploy to manager
+        env:
+          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/fast-end-ch:${{ github.event.workflow_run.head_sha }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -i /tmp/deploy_key ubuntu@${{ secrets.SWARM_MANAGER_IP }} << EOF
+            docker pull $IMAGE
+            sed -i "s|image: .*|image: $IMAGE|" /tmp/docker-compose.yml
+            docker stack deploy -c /tmp/docker-compose.yml todo_stack
+          EOF

@@ -1,33 +1,98 @@
 # FAST End Challenge
 
-## Development
+Este projeto provisiona infraestrutura na AWS com **Terraform**, configura e deploya uma aplicação em **Docker Swarm** com **Ansible**, e automatiza **CI/CD com GitHub Actions**.
 
-To spin up the project, simply install Docker Desktop and then run the following 
-commands:
+---
 
+## 🔧 Pré-requisitos
+
+- [Terraform](https://developer.hashicorp.com/terraform/tutorials)
+- [Ansible](https://docs.ansible.com/)
+- [Docker](https://docs.docker.com/get-docker/) (local para testes)
+- Conta AWS com credenciais configuradas (`aws configure`)
+- Conta Docker Hub ou AWS ECR para push da imagem
+
+---
+
+## ⚙️ Passo 1 — Provisionar infraestrutura (Terraform)
+
+1. Gere uma chave SSH:
+   ```bash
+   ssh-keygen -t rsa -b 4096 -f ./infra/terraform/deploy_key
+   ```
+   - Isso cria deploy_key e deploy_key.pub.
+2. Ajuste variables.tf:
+   ```bash
+       variable "key_name" { default = "deployer" }
+       variable "public_key_path" { default = "infra/terraform/deploy_key.pub" }
+   ```
+3. Execute:
+   ```bash
+       cd /terraform
+       terraform init
+       terraform apply -auto-approve
+   ```
+4. Anote os IPs de saída (swarm_public_ips).
+
+## ⚙️ Passo 2 — Configurar cluster (Ansible)
+
+1. Edite infra/ansible/inventory.ini:
+   ```
+   [managers]
+   manager ansible_host=<IP_MANAGER> ansible_user=ubuntu
+
+   [workers]
+   worker1 ansible_host=<IP_WORKER1> ansible_user=ubuntu
+   worker2 ansible_host=<IP_WORKER2> ansible_user=ubuntu
+
+   ```
+2. Rode o playbook:
+   ```bash
+       cd infra/ansible
+       ansible-playbook -i inventory.ini playbook.yml --private-key ../terraform/deploy_key
+   ```
+3. Verifique no manager:
+   ```bash
+   ssh -i infra/terraform/deploy_key ubuntu@<IP_MANAGER>
+   docker node ls
+   docker service ls
+   ```
+
+## ⚙️ Passo 3 — Configurar CI/CD (GitHub Actions)
+
+- No GitHub, vá em Settings > Secrets and variables > Actions.
+  Adicione os seguintes secrets:
+
+```DOCKERHUB_USERNAME → seu usuário Docker Hub
+
+DOCKERHUB_TOKEN → token do Docker Hub
+
+SSH_PRIVATE_KEY → conteúdo de deploy_key (privada)
+
+SWARM_MANAGER_IP → IP público do manager
 ```
-git clone https://github.com/wallacemt/fast-end-chalenge
-cd fast-end-chalenge
-docker compose up --watch
-```
 
-You'll see several container images get downloaded from Docker Hub and, after a
-moment, the application will be up and running! No need to install or configure
-anything on your machine!
+- A pipeline funciona assim:
 
-Simply open to [http://localhost](http://localhost) to see the app up and running!
+  - CI (.ci/ci.yaml): builda e publica imagem no Docker Hub.
 
-Any changes made to either the backend or frontend should be seen immediately
-without needing to rebuild or restart the containers.
+  - CD (.ci/cd.yaml): conecta ao manager e faz docker stack deploy.
 
-To help with the database, the development stack also includes phpMyAdmin, which
-can be accessed at [http://db.localhost](http://db.localhost) (most browsers will 
-resolve `*.localhost` correctly, so no hosts file changes should be required).
+- Para disparar:
+  - git add .
+  - git commit -m "primeiro deploy"
+  - git push origin main
 
-### Tearing it down
+## ✅ Checklist final
 
-When you're done, simply remove the containers by running the following command:
+- Subiu infraestrutura com Terraform
 
-```
-docker compose down
-```
+- Configurou cluster com Ansible
+
+- Publicou imagem com CI
+
+- Deploy automático com CD
+
+- Aplicação acessível no manager
+
+- Monitoramento configurado (CloudWatch ou Prometheus)

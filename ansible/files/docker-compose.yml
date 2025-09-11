@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  app:
+    image: wallacestm/fast-end-ch:latest
+    container_name: "app-container"
+    restart: always
+    ports:
+      - "80:80"
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
