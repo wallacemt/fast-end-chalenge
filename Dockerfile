@@ -1,5 +1,6 @@
 FROM nginx:latest
-COPY . /tmp/app
-RUN cp -r /tmp/app/dist/* /usr/share/nginx/html/ && rm -rf /tmp/app
+WORKDIR /app
+COPY . /app
+RUN cp -r /app/dist/* /usr/share/nginx/html/ && rm -rf /app
 EXPOSE 80
 CMD [ "nginx", "-g", "daemon off;" ]
