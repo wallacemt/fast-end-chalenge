@@ -9,7 +9,7 @@ on:
   pull_request:
      branches:
         - 'main'
-        
+
 jobs: 
   grype:
     name: grype
@@ -64,7 +64,6 @@ jobs:
           tags: |
             type=ref,event=tag
             type=raw,value=latest,enable={{is_default_branch}}
-            'PR-numero-do-pr'
             type=ref,event=pr,prefix=PR-
             type=sha
       - name: Build and push Docker Image
