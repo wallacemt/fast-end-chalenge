@@ -1,0 +1,14 @@
+- hosts: all
+  become: true
+  roles:
+    - docker
+
+- hosts: managers
+  become: true
+  roles:
+    - swarm
+
+- hosts: workers
+  become: true
+  roles:
+    - deploy_stack  

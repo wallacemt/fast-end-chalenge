@@ -1,0 +1,14 @@
+- name: Initialize Docker Swarm (if not already)
+  community.docker.docker_swarm:
+    state: present
+    advertise_addr: "{{ ansible_host }}"
+  register: swarm_init
+
+- name: Get join token for workers
+  command: docker swarm join-token -q worker
+  when: swarm_init is changed or swarm_init is succeeded
+  register: worker_token
+
+- name: Set worker token fact
+  set_fact:
+    worker_token: "{{ worker_token.stdout }}"

@@ -1,0 +1,9 @@
+- name: Copy docker-compose stack to manager
+  copy:
+    src: ../../files/docker-compose.yml
+    dest: /tmp/docker-compose.yml
+  when: "'managers' in group_names"
+
+- name: Deploy stack
+  command: docker stack deploy -c /tmp/docker-compose.yml todo_stack
+  when: "'managers' in group_names"

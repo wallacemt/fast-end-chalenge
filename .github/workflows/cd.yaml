@@ -1,0 +1,42 @@
+name: fast-cd
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: 'Ambiente de deployment'
+        required: true
+        options: 
+        - dev
+        - prod
+      imageTag:
+        required: true
+        description: 'Deployment image tag'
+        default: 'latest'
+
+jobs:
+  deployment:
+    runs-on: ubuntu-latest
+    env: 
+      HOST_ENV: ${{ github.event.inputs.environment == 'prod' && '54.237.212.2' || '13.218.60.131' }}
+      SSH_USER: "root"
+      SSH_PORT: 22
+    steps:
+      - run: |
+          echo "Ambiente de deployment: ${{github.event.inputs.environment}}"
+          echo "Tag da imagem: ${{github.event.inputs.imageTag}}"
+
+      - name: Deployment Service
+        uses: appleboy/ssh-action@v1.0.3
+        with: 
+          host: "${{env.HOST_ENV}}"
+          username: "${{env.SSH_USER}}"
+          key: "${{secrets.SSH_KEY}}"
+          port: "${{env.SSH_PORT}}"
+          script: |
+            sudo mkdir -p /fast-end-ch
+            sudo docker service rm fast-end-ch | true
+            sudo docker service create --name fast-end-ch --replicas=3 -p 80:3000 \
+            --mount type=bind,source=/fast-end-ch,destination=/etc/todos \
+            wallacestm/fast-end-ch:${{ github.event.inputs.imageTag }}
