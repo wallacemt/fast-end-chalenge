@@ -56,6 +56,14 @@ jobs:
           echo "WORKER1_IP=$(jq -r '.swarm_public_ips.value[1]' tf.json)" >> $GITHUB_ENV
           echo "WORKER2_IP=$(jq -r '.swarm_public_ips.value[2]' tf.json)" >> $GITHUB_ENV
 
+      - name: Validate IPs
+        run: |
+          if [ -z "$MANAGER_IP" ] || [ -z "$WORKER1_IP" ] || [ -z "$WORKER2_IP" ]; then
+            echo "Error: Failed to extract IPs from Terraform output"
+            exit 1
+          fi
+          echo "Manager IP: $MANAGER_IP"
+          echo "Worker IPs: $WORKER1_IP, $WORKER2_IP"
       # Instala Ansible
       - name: Install Ansible
         run: |
