@@ -1,15 +1,23 @@
-name: CD - Infra & Deploy
+name: fast-end-cd
 
 on:
-  workflow_run:
-    workflows: ["CI - Build & Push"]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: "Ambiente de deployment"
+        required: true
+        options:
+          - prod
+      imageTag:
+        required: true
+        description: "Deployment image tag"
+        default: "latest"
 
 jobs:
   deploy:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
       - name: Configure AWS credentials
