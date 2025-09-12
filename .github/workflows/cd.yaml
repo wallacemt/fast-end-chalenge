@@ -40,10 +40,35 @@ jobs:
           echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/id_rsa.pub
           sudo chmod 644 /tmp/id_rsa.pub
 
-        # Apply Terraform with SSH key
-      - name: Terraform Apply
+     # Import existing resources to avoid duplicates
+      - name: Import existing resources
         working-directory: infra/terraform
-        run: terraform apply -auto-approve -var="key_name=deployer" -var="public_key_path=/tmp/id_rsa.pub"
+        run: |
+          chmod +x import_existing.sh
+          ./import_existing.sh || echo "Some resources may not exist yet - continuing..."
+
+      # Check if there are changes to apply
+      - name: Check Terraform changes
+        id: tf-plan
+        working-directory: infra/terraform
+        run: |
+          terraform plan -detailed-exitcode -var="key_name=deployer" -var="public_key_path=/tmp/id_rsa.pub" -out=tfplan
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+
+      # Apply Terraform only if there are changes
+      - name: Terraform Apply
+        if: steps.tf-plan.outputs.exit_code == '2'
+        working-directory: infra/terraform
+        run: |
+          echo "Changes detected, applying Terraform..."
+          terraform apply -auto-approve tfplan
+
+      # Show message if no changes
+      - name: No changes needed
+        if: steps.tf-plan.outputs.exit_code == '0'
+        run: |
+          echo "✅ No changes detected. All infrastructure is up to date!"
+          echo "🎯 Reusing existing EC2 instances, Security Group, and Key Pair"
 
       # Recupera IPs dos nodes
       - name: Get Terraform outputs
@@ -90,4 +115,4 @@ jobs:
       - name: Run Ansible
         working-directory: infra/ansible
         run: |
-          ansible-playbook -i inventory.ini playbook.yml --private-key ~/.ssh/deploy_key 
+          ansible-playbook -i inventory.ini playbook.yml --private-key ~/.ssh/deploy_key

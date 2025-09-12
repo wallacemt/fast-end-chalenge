@@ -129,4 +129,14 @@ dist
 .yarn/install-state.gz
 .pnp.*
 keys
-.terraform
+# Terraform-generated directories and files
+.terraform/
+*.tfstate
+*.tfstate.*backup
+.tfvars
+.tfvars.json
+crash.log
+crash.*.log
+*.tfplan
+.terraformrc
+terraform.rc
