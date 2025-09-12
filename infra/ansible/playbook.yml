@@ -37,10 +37,17 @@
       shell: docker swarm join-token -q worker
       register: worker_token
 
-    - name: Set global variables using hostvars
-      set_fact:
-        global_swarm_token: "{{ worker_token.stdout }}"
-        global_manager_ip: "{{ ansible_host }}"
+    - name: Save token to file for workers
+      copy:
+        content: "{{ worker_token.stdout }}"
+        dest: /tmp/swarm_token
+        mode: "0644"
+
+    - name: Save manager IP to file for workers
+      copy:
+        content: "{{ ansible_host }}"
+        dest: /tmp/manager_ip
+        mode: "0644"
 
     - name: Verify token was generated
       debug:
@@ -52,16 +59,33 @@
 - hosts: workers
   become: true
   tasks:
-    - name: Get token from manager via hostvars
+    - name: Get manager host info
       set_fact:
-        worker_join_token: "{{ hostvars[groups['managers'][0]]['global_swarm_token'] }}"
-        manager_ip: "{{ hostvars[groups['managers'][0]]['global_manager_ip'] }}"
+        manager_host: "{{ groups['managers'][0] }}"
+
+    - name: Get token from manager host file
+      slurp:
+        src: /tmp/swarm_token
+      register: token_file
+      delegate_to: "{{ manager_host }}"
+
+    - name: Get manager IP from manager host file
+      slurp:
+        src: /tmp/manager_ip
+      register: ip_file
+      delegate_to: "{{ manager_host }}"
+
+    - name: Set worker variables from files
+      set_fact:
+        worker_join_token: "{{ token_file.content | b64decode | trim }}"
+        manager_ip: "{{ ip_file.content | b64decode | trim }}"
 
     - name: Debug extracted values
       debug:
         msg:
           - "Token: {{ worker_join_token | default('NOT_FOUND') }}"
           - "Manager IP: {{ manager_ip | default('NOT_FOUND') }}"
+          - "Manager host: {{ manager_host }}"
 
     - name: Check current swarm status
       shell: docker info | grep "Swarm:" | awk '{print $2}'
@@ -93,6 +117,10 @@
 - hosts: managers
   become: true
   tasks:
+    - name: Wait a moment for workers to join
+      pause:
+        seconds: 5
+
     - name: Verify swarm cluster
       shell: docker node ls
       register: swarm_nodes
@@ -100,6 +128,14 @@
     - name: Display swarm cluster status
       debug:
         msg: "{{ swarm_nodes.stdout_lines }}"
+
+    - name: Clean up temporary files
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/swarm_token
+        - /tmp/manager_ip
 
     - name: Deploy application stack
       include_role:
