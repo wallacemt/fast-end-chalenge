@@ -1,15 +1,11 @@
-version: "3.9"
-
 networks:
   monitoring:
-    driver: overlay
-    attachable: true
+    driver: bridge
 
 services:
   app:
     image: wallacestm/fast-end-ch:latest
     container_name: "app-container"
-    restart: always
     ports:
       - "80:80"
     networks:
@@ -21,6 +17,7 @@ services:
 
   blackbox:
     image: prom/blackbox-exporter:latest
+    container_name: "blackbox-exporter"
     ports:
       - "9115:9115"
     networks:
@@ -31,6 +28,10 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
+    container_name: "prometheus"
+    volumes:
+      - prometheus_data:/prometheus
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yml:ro
     ports:
       - "9090:9090"
     networks:
@@ -53,8 +54,16 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+    
     networks:
       - monitoring
     deploy:
       restart_policy:
         condition: on-failure
+
+volumes:
+  prometheus_data:
+  grafana_data:
