@@ -13,6 +13,10 @@ on:
         required: true
         description: "Deployment image tag"
         default: "latest"
+      terraform-aply:
+        required: true
+        description: "Apply Terraform changes"
+        default: "false"
 
 jobs:
   deploy:
@@ -59,7 +63,7 @@ jobs:
 
       # Apply Terraform only if there are changes
       - name: Terraform Apply
-        if: steps.tf-plan.outputs.exit_code == '2' || steps.tf-import.outputs.exit_code == '2'
+        if: inputs.terraform-aply == 'true' || steps.tf-import.outputs.exit_code == '2' || steps.tf-plan.outputs.exit_code == '2' 
         working-directory: infra/terraform
         run: |
           echo "Changes detected, applying Terraform..."

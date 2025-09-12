@@ -99,10 +99,11 @@ echo "=== Verificação concluída com sucesso ==="
 echo "Total de recursos não encontrados na AWS: $MISSING_RESOURCES"
 
 # Se muitos recursos estão faltando, pode indicar problema
-if [ $MISSING_RESOURCES -gt 1 ]; then
+if [ [$MISSING_RESOURCES -gt 1] ]; then
     echo "⚠️ Aviso: $MISSING_RESOURCES recursos não foram encontrados na AWS"
     echo "Isso pode indicar que a infraestrutura não foi provisionada ainda"
     exit 2
 fi
 
 exit 0
+echo "Exit code: $?"
