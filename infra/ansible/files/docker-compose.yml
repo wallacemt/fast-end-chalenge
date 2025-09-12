@@ -7,6 +7,9 @@ services:
     restart: always
     ports:
       - "80:80"
+      - "9115:9115"
+      - "9090:9090"
+      - "3000:3000"
     deploy:
       replicas: 2
       restart_policy:
