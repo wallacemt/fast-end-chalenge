@@ -108,11 +108,15 @@ jobs:
       # Prepara chave SSH para conectar nas EC2
       - name: Setup SSH key
         run: |
+          mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ env.MANAGER_IP }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H ${{ env.WORKER1_IP }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H ${{ env.WORKER2_IP }} >> ~/.ssh/known_hosts
 
       # Roda Ansible playbook
       - name: Run Ansible
         working-directory: infra/ansible
         run: |
-          ansible-playbook -i inventory.ini playbook.yml --private-key ~/.ssh/deploy_key
+          ansible-playbook -i inventory.ini playbook.yml --private-key ~/.ssh/deploy_key --ssh-common-args='-o StrictHostKeyChecking=no'
