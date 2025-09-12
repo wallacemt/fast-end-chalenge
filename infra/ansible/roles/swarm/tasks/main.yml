@@ -1,3 +1,8 @@
+- name: Install pip3
+  package:
+    name: python3-pip
+    state: present
+
 - name: Install Docker SDK for Python
   pip:
     name: docker>=5.0.0
@@ -14,6 +19,11 @@
   when: swarm_init is changed or swarm_init is succeeded
   register: worker_token
 
-- name: Set worker token fact
+- name: Set worker token fact globally
   set_fact:
-    worker_token: "{{ worker_token.stdout }}"
+    swarm_worker_token: "{{ worker_token.stdout }}"
+    swarm_manager_ip: "{{ ansible_host }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  with_items: "{{ groups['all'] }}"
+  when: worker_token is defined and worker_token.stdout is defined

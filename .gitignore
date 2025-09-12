@@ -128,10 +128,5 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
-
-/keys/**
-
-deploy_key
-deploy_key.pub
-
+keys
 .terraform

@@ -10,5 +10,16 @@
 
 - hosts: workers
   become: true
+  tasks:
+    - name: Join Docker Swarm as worker
+      community.docker.docker_swarm:
+        state: join
+        join_token: "{{ swarm_worker_token }}"
+        remote_addrs:
+          - "{{ swarm_manager_ip }}:2377"
+      when: swarm_worker_token is defined
+
+- hosts: managers
+  become: true
   roles:
-    - deploy_stack  
+    - deploy_stack

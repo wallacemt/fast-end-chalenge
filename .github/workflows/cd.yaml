@@ -1,4 +1,4 @@
-name: CD - Deploy to Swarm
+name: CD - Infra & Deploy
 
 on:
   workflow_run:
@@ -9,20 +9,72 @@ jobs:
   deploy:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Setup SSH
+      # Instala Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: infra/terraform
+        run: terraform init
+
+      # Create SSH public key file from secret
+      - name: Setup SSH public key
+        run: |
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/id_rsa.pub
+          sudo chmod 644 /tmp/id_rsa.pub
+
+        # Apply Terraform with SSH key
+      - name: Terraform Apply
+        working-directory: infra/terraform
+        run: terraform apply -auto-approve -var="key_name=deployer" -var="public_key_path=/tmp/id_rsa.pub"
+
+      # Recupera IPs dos nodes
+      - name: Get Terraform outputs
+        id: tf-out
+        working-directory: infra/terraform
+        run: |
+          terraform output -json > tf.json
+          cat tf.json
+          echo "MANAGER_IP=$(jq -r '.swarm_public_ips.value[0]' tf.json)" >> $GITHUB_ENV
+          echo "WORKER1_IP=$(jq -r '.swarm_public_ips.value[1]' tf.json)" >> $GITHUB_ENV
+          echo "WORKER2_IP=$(jq -r '.swarm_public_ips.value[2]' tf.json)" >> $GITHUB_ENV
+
+      # Instala Ansible
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible python3-boto3
+          ansible-galaxy collection install community.docker
+
+      # Prepara inventário dinâmico
+      - name: Generate Ansible inventory
+        run: |
+          echo "[managers]" > infra/ansible/inventory.ini
+          echo "manager ansible_host=${{ env.MANAGER_IP }} ansible_user=ubuntu" >> infra/ansible/inventory.ini
+          echo "[workers]" >> infra/ansible/inventory.ini
+          echo "worker1 ansible_host=${{ env.WORKER1_IP }} ansible_user=ubuntu" >> infra/ansible/inventory.ini
+          echo "worker2 ansible_host=${{ env.WORKER2_IP }} ansible_user=ubuntu" >> infra/ansible/inventory.ini
+
+      # Prepara chave SSH para conectar nas EC2
+      - name: Setup SSH key
         run: |
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
 
-      - name: Deploy to manager
-        env:
-          IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/fast-end-ch:${{ github.event.workflow_run.head_sha }}
+      # Roda Ansible playbook
+      - name: Run Ansible
+        working-directory: infra/ansible
         run: |
-          ssh -o StrictHostKeyChecking=no -i /tmp/deploy_key ubuntu@${{ secrets.SWARM_MANAGER_IP }} << EOF
-            docker pull $IMAGE
-            sed -i "s|image: .*|image: $IMAGE|" /tmp/docker-compose.yml
-            docker stack deploy -c /tmp/docker-compose.yml todo_stack
-          EOF
+          ansible-playbook -i inventory.ini playbook.yml \
+            --private-key /tmp/deploy_key \
+            -e "app_image=${{ secrets.DOCKERHUB_USERNAME }}/fast-end-ch:${{ github.event.workflow_run.head_sha }}"
