@@ -83,13 +83,11 @@ jobs:
       # Prepara chave SSH para conectar nas EC2
       - name: Setup SSH key
         run: |
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/deploy_key
-          chmod 600 /tmp/deploy_key
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
 
       # Roda Ansible playbook
       - name: Run Ansible
         working-directory: infra/ansible
         run: |
-          ansible-playbook -i inventory.ini playbook.yml \
-            --private-key /tmp/deploy_key \
-            -e "app_image=${{ secrets.DOCKERHUB_USERNAME }}/fast-end-ch:${{ github.event.workflow_run.head_sha }}"
+          ansible-playbook -i inventory.ini playbook.yml --private-key ~/.ssh/deploy_key 
