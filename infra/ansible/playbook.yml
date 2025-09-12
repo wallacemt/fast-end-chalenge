@@ -37,16 +37,22 @@
       shell: docker swarm join-token -q worker
       register: worker_token
 
+    - name: Create directory for swarm files
+      file:
+        path: "{{ ansible_env.HOME }}/swarm_info"
+        state: directory
+        mode: "0755"
+
     - name: Save token to file for workers
       copy:
         content: "{{ worker_token.stdout }}"
-        dest: /tmp/swarm_token
+        dest: "{{ ansible_env.HOME }}/swarm_info/swarm_token"
         mode: "0644"
 
     - name: Save manager IP to file for workers
       copy:
         content: "{{ ansible_host }}"
-        dest: /tmp/manager_ip
+        dest: "{{ ansible_env.HOME }}/swarm_info/manager_ip"
         mode: "0644"
 
     - name: Verify token was generated
@@ -65,13 +71,13 @@
 
     - name: Get token from manager host file
       slurp:
-        src: /tmp/swarm_token
+        src: "{{ ansible_env.HOME }}/swarm_info/swarm_token"
       register: token_file
       delegate_to: "{{ manager_host }}"
 
     - name: Get manager IP from manager host file
       slurp:
-        src: /tmp/manager_ip
+        src: "{{ ansible_env.HOME }}/swarm_info/manager_ip"
       register: ip_file
       delegate_to: "{{ manager_host }}"
 
@@ -131,11 +137,8 @@
 
     - name: Clean up temporary files
       file:
-        path: "{{ item }}"
+        path: "{{ ansible_env.HOME }}/swarm_info"
         state: absent
-      loop:
-        - /tmp/swarm_token
-        - /tmp/manager_ip
 
     - name: Deploy application stack
       include_role:
