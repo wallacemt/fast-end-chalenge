@@ -1,5 +1,10 @@
 version: "3.9"
 
+networks:
+  monitoring:
+    driver: overlay
+    attachable: true
+
 services:
   app:
     image: wallacestm/fast-end-ch:latest
@@ -7,10 +12,49 @@ services:
     restart: always
     ports:
       - "80:80"
-      - "9115:9115"
-      - "9090:9090"
-      - "3000:3000"
+    networks:
+      - monitoring
     deploy:
       replicas: 2
+      restart_policy:
+        condition: on-failure
+
+  blackbox:
+    image: prom/blackbox-exporter:latest
+    ports:
+      - "9115:9115"
+    networks:
+      - monitoring
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--storage.tsdb.retention.time=200h"
+      - "--web.enable-lifecycle"
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - monitoring
+    deploy:
       restart_policy:
         condition: on-failure

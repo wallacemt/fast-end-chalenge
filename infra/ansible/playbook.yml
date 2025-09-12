@@ -25,6 +25,11 @@
 - hosts: workers
   become: true
   tasks:
+    - name: Get swarm info from dummy host
+      set_fact:
+        swarm_worker_token: "{{ hostvars['swarm_info']['swarm_worker_token'] | default('') }}"
+        swarm_manager_ip: "{{ hostvars['swarm_info']['swarm_manager_ip'] | default('') }}"
+
     - name: Debug swarm variables
       debug:
         msg:
@@ -43,6 +48,7 @@
         - swarm_worker_token is defined
         - swarm_manager_ip is defined
         - swarm_worker_token != ""
+        - swarm_manager_ip != ""
       register: join_result
       ignore_errors: yes
 

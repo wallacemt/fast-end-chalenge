@@ -4,16 +4,32 @@
     advertise_addr: "{{ ansible_host }}"
   register: swarm_init
 
-- name: Get join token for workers
+- name: Get join token for workers (always)
   command: docker swarm join-token -q worker
-  when: swarm_init is changed or swarm_init is succeeded
   register: worker_token
 
-- name: Set worker token fact globally
+- name: Debug token generation
+  debug:
+    msg:
+      - "Swarm init result: {{ swarm_init.changed }}"
+      - "Worker token: {{ worker_token.stdout }}"
+      - "Manager IP: {{ ansible_host }}"
+
+- name: Create swarm info file on manager
+  copy:
+    content: |
+      swarm_worker_token: "{{ worker_token.stdout }}"
+      swarm_manager_ip: "{{ ansible_host }}"
+    dest: /tmp/swarm_info.yml
+    mode: "0644"
+
+- name: Set worker token fact for manager
   set_fact:
     swarm_worker_token: "{{ worker_token.stdout }}"
     swarm_manager_ip: "{{ ansible_host }}"
-  delegate_to: "{{ item }}"
-  delegate_facts: true
-  with_items: "{{ groups['all'] }}"
-  when: worker_token is defined and worker_token.stdout is defined
+
+- name: Add to dummy host for sharing
+  add_host:
+    name: "swarm_info"
+    swarm_worker_token: "{{ worker_token.stdout }}"
+    swarm_manager_ip: "{{ ansible_host }}"
