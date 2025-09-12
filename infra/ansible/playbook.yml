@@ -1,3 +1,4 @@
+---
 - hosts: all
   become: true
   roles:
@@ -19,46 +20,87 @@
 
 - hosts: managers
   become: true
-  roles:
-    - swarm
+  tasks:
+    - name: Check if swarm is already initialized
+      shell: docker info | grep "Swarm:" | awk '{print $2}'
+      register: swarm_status
+      ignore_errors: yes
+
+    - name: Initialize Docker Swarm if not active
+      community.docker.docker_swarm:
+        state: present
+        advertise_addr: "{{ ansible_host }}"
+      register: swarm_init
+      when: swarm_status.stdout != "active"
+
+    - name: Always get join token (for new and existing swarms)
+      shell: docker swarm join-token -q worker
+      register: worker_token
+
+    - name: Set global variables using hostvars
+      set_fact:
+        global_swarm_token: "{{ worker_token.stdout }}"
+        global_manager_ip: "{{ ansible_host }}"
+
+    - name: Verify token was generated
+      debug:
+        msg:
+          - "Token generated: {{ worker_token.stdout }}"
+          - "Manager IP: {{ ansible_host }}"
+          - "Swarm status: {{ swarm_status.stdout }}"
 
 - hosts: workers
   become: true
   tasks:
-    - name: Get swarm info from dummy host
+    - name: Get token from manager via hostvars
       set_fact:
-        swarm_worker_token: "{{ hostvars['swarm_info']['swarm_worker_token'] | default('') }}"
-        swarm_manager_ip: "{{ hostvars['swarm_info']['swarm_manager_ip'] | default('') }}"
+        worker_join_token: "{{ hostvars[groups['managers'][0]]['global_swarm_token'] }}"
+        manager_ip: "{{ hostvars[groups['managers'][0]]['global_manager_ip'] }}"
 
-    - name: Debug swarm variables
+    - name: Debug extracted values
       debug:
         msg:
-          - "Worker token defined: {{ swarm_worker_token is defined }}"
-          - "Manager IP defined: {{ swarm_manager_ip is defined }}"
-          - "Token value: {{ swarm_worker_token | default('UNDEFINED') }}"
-          - "Manager IP: {{ swarm_manager_ip | default('UNDEFINED') }}"
+          - "Token: {{ worker_join_token | default('NOT_FOUND') }}"
+          - "Manager IP: {{ manager_ip | default('NOT_FOUND') }}"
 
-    - name: Join Docker Swarm as worker (always attempt)
+    - name: Check current swarm status
+      shell: docker info | grep "Swarm:" | awk '{print $2}'
+      register: current_swarm_status
+      ignore_errors: yes
+
+    - name: Join swarm if not already member and token exists
       community.docker.docker_swarm:
         state: join
-        join_token: "{{ swarm_worker_token }}"
+        join_token: "{{ worker_join_token }}"
         remote_addrs:
-          - "{{ swarm_manager_ip }}:2377"
-      when:
-        - swarm_worker_token is defined
-        - swarm_manager_ip is defined
-        - swarm_worker_token != ""
-        - swarm_manager_ip != ""
+          - "{{ manager_ip }}:2377"
       register: join_result
       ignore_errors: yes
+      when:
+        - worker_join_token is defined
+        - worker_join_token != ""
+        - manager_ip is defined
+        - manager_ip != ""
+        - current_swarm_status.stdout != "active"
 
     - name: Display join result
       debug:
         msg:
-          - "Join attempt result: {{ 'Success' if join_result.changed else 'Already in swarm or failed' }}"
-          - "Error (if any): {{ join_result.msg | default('No error') }}"
+          - "Current swarm status: {{ current_swarm_status.stdout | default('unknown') }}"
+          - "Join attempted: {{ join_result.changed | default(false) }}"
+          - "Join error: {{ join_result.msg | default('No error or not attempted') }}"
 
 - hosts: managers
   become: true
-  roles:
-    - deploy_stack
+  tasks:
+    - name: Verify swarm cluster
+      shell: docker node ls
+      register: swarm_nodes
+
+    - name: Display swarm cluster status
+      debug:
+        msg: "{{ swarm_nodes.stdout_lines }}"
+
+    - name: Deploy application stack
+      include_role:
+        name: deploy_stack

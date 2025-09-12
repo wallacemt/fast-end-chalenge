@@ -7,6 +7,7 @@
 - name: Get join token for workers (always)
   command: docker swarm join-token -q worker
   register: worker_token
+  failed_when: worker_token.rc != 0
 
 - name: Debug token generation
   debug:
@@ -15,21 +16,21 @@
       - "Worker token: {{ worker_token.stdout }}"
       - "Manager IP: {{ ansible_host }}"
 
-- name: Create swarm info file on manager
-  copy:
-    content: |
-      swarm_worker_token: "{{ worker_token.stdout }}"
-      swarm_manager_ip: "{{ ansible_host }}"
-    dest: /tmp/swarm_info.yml
-    mode: "0644"
+- name: Verify token is not empty
+  fail:
+    msg: "Worker token is empty or undefined"
+  when: worker_token.stdout is not defined or worker_token.stdout == ""
 
-- name: Set worker token fact for manager
+- name: Set facts globally using group_vars
   set_fact:
     swarm_worker_token: "{{ worker_token.stdout }}"
     swarm_manager_ip: "{{ ansible_host }}"
+  delegate_to: "{{ item }}"
+  delegate_facts: true
+  loop: "{{ groups['all'] }}"
 
-- name: Add to dummy host for sharing
-  add_host:
-    name: "swarm_info"
-    swarm_worker_token: "{{ worker_token.stdout }}"
-    swarm_manager_ip: "{{ ansible_host }}"
+- name: Verify facts were set correctly
+  debug:
+    msg:
+      - "Token set: {{ swarm_worker_token }}"
+      - "Manager IP set: {{ swarm_manager_ip }}"
