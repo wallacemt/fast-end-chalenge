@@ -60,10 +60,11 @@ for i in 0 1 2; do
 done
 
 echo "=== Importação concluída ==="
+
 echo "=== Executando terraform plan para verificar estado ==="
 
 # Executa terraform plan e captura o output
-PLAN_OUTPUT=$(terraform plan -detailed-exitcode 2>&1) || PLAN_EXIT_CODE=$?
+PLAN_OUTPUT=$(terraform plan -detailed-exitcode 2>&1 -var="key_name=deployer" -var="public_key_path=/tmp/id_rsa.pub") || PLAN_EXIT_CODE=$?
 
 # terraform plan exit codes:
 # 0 = No changes, 1 = Error, 2 = Changes present
