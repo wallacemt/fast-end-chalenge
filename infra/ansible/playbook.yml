@@ -18,114 +18,84 @@
       delay: 3
       ignore_errors: yes
 
-- hosts: managers
+# Single play for swarm setup to avoid delegation issues
+- hosts: all
   become: true
+  serial: 1
   tasks:
+    # Manager tasks
     - name: Check if swarm is already initialized
       shell: docker info | grep "Swarm:" | awk '{print $2}'
       register: swarm_status
       ignore_errors: yes
+      when: inventory_hostname in groups['managers']
 
     - name: Initialize Docker Swarm if not active
       community.docker.docker_swarm:
         state: present
         advertise_addr: "{{ ansible_host }}"
       register: swarm_init
-      when: swarm_status.stdout != "active"
+      when:
+        - inventory_hostname in groups['managers']
+        - swarm_status.stdout != "active"
 
-    - name: Always get join token (for new and existing swarms)
+    - name: Get join token for workers
       shell: docker swarm join-token -q worker
       register: worker_token
+      when: inventory_hostname in groups['managers']
 
-    - name: Create directory for swarm files
-      file:
-        path: "{{ ansible_env.HOME }}/swarm_info"
-        state: directory
-        mode: "0755"
+    - name: Set manager facts globally
+      set_fact:
+        swarm_worker_token: "{{ hostvars[groups['managers'][0]]['worker_token']['stdout'] }}"
+        swarm_manager_ip: "{{ hostvars[groups['managers'][0]]['ansible_host'] }}"
+      when: inventory_hostname in groups['workers']
 
-    - name: Save token to file for workers
-      copy:
-        content: "{{ worker_token.stdout }}"
-        dest: "{{ ansible_env.HOME }}/swarm_info/swarm_token"
-        mode: "0644"
-
-    - name: Save manager IP to file for workers
-      copy:
-        content: "{{ ansible_host }}"
-        dest: "{{ ansible_env.HOME }}/swarm_info/manager_ip"
-        mode: "0644"
-
-    - name: Verify token was generated
+    - name: Debug token info for workers
       debug:
         msg:
-          - "Token generated: {{ worker_token.stdout }}"
-          - "Manager IP: {{ ansible_host }}"
-          - "Swarm status: {{ swarm_status.stdout }}"
+          - "Manager IP: {{ swarm_manager_ip | default('NOT_SET') }}"
+          - "Worker Token: {{ swarm_worker_token | default('NOT_SET') }}"
+          - "Current host: {{ inventory_hostname }}"
+          - "Is worker: {{ inventory_hostname in groups['workers'] }}"
+      when: inventory_hostname in groups['workers']
 
-- hosts: workers
-  become: true
-  tasks:
-    - name: Get manager host info
-      set_fact:
-        manager_host: "{{ groups['managers'][0] }}"
-
-    - name: Get token from manager host file
-      slurp:
-        src: "{{ ansible_env.HOME }}/swarm_info/swarm_token"
-      register: token_file
-      delegate_to: "{{ manager_host }}"
-
-    - name: Get manager IP from manager host file
-      slurp:
-        src: "{{ ansible_env.HOME }}/swarm_info/manager_ip"
-      register: ip_file
-      delegate_to: "{{ manager_host }}"
-
-    - name: Set worker variables from files
-      set_fact:
-        worker_join_token: "{{ token_file.content | b64decode | trim }}"
-        manager_ip: "{{ ip_file.content | b64decode | trim }}"
-
-    - name: Debug extracted values
-      debug:
-        msg:
-          - "Token: {{ worker_join_token | default('NOT_FOUND') }}"
-          - "Manager IP: {{ manager_ip | default('NOT_FOUND') }}"
-          - "Manager host: {{ manager_host }}"
-
-    - name: Check current swarm status
+    - name: Check current swarm status on workers
       shell: docker info | grep "Swarm:" | awk '{print $2}'
       register: current_swarm_status
       ignore_errors: yes
+      when: inventory_hostname in groups['workers']
 
-    - name: Join swarm if not already member and token exists
+    - name: Join swarm as worker
       community.docker.docker_swarm:
         state: join
-        join_token: "{{ worker_join_token }}"
+        join_token: "{{ swarm_worker_token }}"
         remote_addrs:
-          - "{{ manager_ip }}:2377"
+          - "{{ swarm_manager_ip }}:2377"
       register: join_result
       ignore_errors: yes
       when:
-        - worker_join_token is defined
-        - worker_join_token != ""
-        - manager_ip is defined
-        - manager_ip != ""
+        - inventory_hostname in groups['workers']
+        - swarm_worker_token is defined
+        - swarm_worker_token != ""
+        - swarm_manager_ip is defined
+        - swarm_manager_ip != ""
         - current_swarm_status.stdout != "active"
 
-    - name: Display join result
+    - name: Display join result for workers
       debug:
         msg:
           - "Current swarm status: {{ current_swarm_status.stdout | default('unknown') }}"
           - "Join attempted: {{ join_result.changed | default(false) }}"
           - "Join error: {{ join_result.msg | default('No error or not attempted') }}"
+      when: inventory_hostname in groups['workers']
 
+# Final verification and deployment
 - hosts: managers
   become: true
   tasks:
-    - name: Wait a moment for workers to join
+    - name: Wait for workers to join
       pause:
-        seconds: 5
+        seconds: 10
 
     - name: Verify swarm cluster
       shell: docker node ls
@@ -134,11 +104,6 @@
     - name: Display swarm cluster status
       debug:
         msg: "{{ swarm_nodes.stdout_lines }}"
-
-    - name: Clean up temporary files
-      file:
-        path: "{{ ansible_env.HOME }}/swarm_info"
-        state: absent
 
     - name: Deploy application stack
       include_role:
