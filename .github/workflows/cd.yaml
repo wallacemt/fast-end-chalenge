@@ -40,12 +40,14 @@ jobs:
           echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/id_rsa.pub
           sudo chmod 644 /tmp/id_rsa.pub
 
-     # Import existing resources to avoid duplicates
+      # Import existing resources to avoid duplicates
       - name: Import existing resources
+        id: tf-import
         working-directory: infra/terraform
         run: |
           chmod +x import_existing.sh
           ./import_existing.sh || echo "Some resources may not exist yet - continuing..."
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
 
       # Check if there are changes to apply
       - name: Check Terraform changes
@@ -57,7 +59,7 @@ jobs:
 
       # Apply Terraform only if there are changes
       - name: Terraform Apply
-        if: steps.tf-plan.outputs.exit_code == '2'
+        if: steps.tf-plan.outputs.exit_code == '2' || steps.tf-import.outputs.exit_code == '2'
         working-directory: infra/terraform
         run: |
           echo "Changes detected, applying Terraform..."
