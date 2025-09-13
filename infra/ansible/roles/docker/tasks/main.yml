@@ -1,32 +1,88 @@
-- name: Install apt deps
-  apt:
-    name: ["apt-transport-https", "ca-certificates", "curl", "gnupg", "lsb-release", "python3-pip"]
-    state: present
-    update_cache: yes
+- name: 🔧 Fix /tmp permissions
+  file:
+    path: /tmp
+    mode: '1777'
+    state: directory
+  become: true
 
-- name: Add Docker GPG key
+- name: 🧹 Clean apt cache and locks
+  shell: |
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+    rm -f /var/cache/apt/archives/lock
+    rm -f /var/lib/dpkg/lock*
+    dpkg --configure -a
+  become: true
+  ignore_errors: yes
+
+- name: 🔧 Update apt cache with retries
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600  
+  become: true
+  register: apt_update
+  until: apt_update is succeeded
+  retries: 5
+  delay: 10
+
+- name: 📦 Install apt dependencies
+  apt:
+    name: 
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - python3-pip
+    state: present
+  become: true
+  register: apt_install
+  until: apt_install is succeeded
+  retries: 3
+  delay: 5
+
+- name: 🔑 Add Docker GPG key
   apt_key:
     url: https://download.docker.com/linux/ubuntu/gpg
     state: present
+  become: true
 
-- name: Add Docker repo
+- name: 📦 Add Docker repository
   apt_repository:
-    repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable
+    repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
     state: present
+  become: true
 
-- name: Install docker engine
+- name: 🐳 Install Docker Engine
   apt:
-    name: ["docker-ce", "docker-ce-cli", "containerd.io"]
+    name: 
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
     state: latest
     update_cache: yes
+  become: true
+  register: docker_install
+  until: docker_install is succeeded
+  retries: 3
+  delay: 10
 
-- name: Install Docker SDK for Python
+- name: 🐍 Install Docker SDK for Python
   pip:
     name: docker>=5.0.0
     state: present
+  become: true
 
-- name: Add user to docker group
+- name: 👥 Add user to docker group
   user:
     name: "{{ ansible_user }}"
     groups: docker
     append: yes
+  become: true
+
+- name: 🔄 Start and enable Docker service
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+  become: true

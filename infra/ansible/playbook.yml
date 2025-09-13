@@ -1,16 +1,46 @@
 ---
 - hosts: all
+  gather_facts: no  # ← Desabilita gathering automático
+  tasks:
+    - name: 🔍 Test basic connectivity
+      ping:
+
+    - name: 🐍 Check Python version
+      raw: python3 --version
+      register: python_check
+      ignore_errors: yes
+
+    - name: 📦 Install Python3 if missing
+      raw: sudo apt update && sudo apt install -y python3 python3-pip
+      when: python_check is failed
+      ignore_errors: yes
+
+    - name: 🔧 Gather facts manually with retries
+      setup:
+      register: setup_result
+      until: setup_result is succeeded
+      retries: 3
+      delay: 5
+      ignore_errors: yes
+
+    - name: ⚠️ Show warning if facts gathering failed
+      debug:
+        msg: "WARNING: Could not gather facts, proceeding anyway..."
+      when: setup_result is failed
+
+- hosts: all
   become: true
+  gather_facts: no  # ← Já coletamos manualmente
   roles:
     - docker
   tasks:
-    - name: Restart Docker service
+    - name: 🔄 Restart Docker service
       systemd:
         name: docker
         state: restarted
         enabled: yes
 
-    - name: Wait for Docker daemon to be ready
+    - name: ⏳ Wait for Docker daemon to be ready
       shell: docker info
       register: docker_info
       until: docker_info.rc == 0
@@ -21,16 +51,17 @@
 # Single play for swarm setup to avoid delegation issues
 - hosts: all
   become: true
+  gather_facts: no
   serial: 1
   tasks:
     # Manager tasks
-    - name: Check if swarm is already initialized
+    - name: 🔍 Check if swarm is already initialized
       shell: docker info | grep "Swarm:" | awk '{print $2}'
       register: swarm_status
       ignore_errors: yes
       when: inventory_hostname in groups['managers']
 
-    - name: Initialize Docker Swarm if not active
+    - name: 🚀 Initialize Docker Swarm if not active
       community.docker.docker_swarm:
         state: present
         advertise_addr: "{{ ansible_host }}"
@@ -39,18 +70,18 @@
         - inventory_hostname in groups['managers']
         - swarm_status.stdout != "active"
 
-    - name: Get join token for workers
+    - name: 🔑 Get join token for workers
       shell: docker swarm join-token -q worker
       register: worker_token
       when: inventory_hostname in groups['managers']
 
-    - name: Set manager facts globally
+    - name: 📋 Set manager facts globally
       set_fact:
         swarm_worker_token: "{{ hostvars[groups['managers'][0]]['worker_token']['stdout'] }}"
         swarm_manager_ip: "{{ hostvars[groups['managers'][0]]['ansible_host'] }}"
       when: inventory_hostname in groups['workers']
 
-    - name: Debug token info for workers
+    - name: 🐛 Debug token info for workers
       debug:
         msg:
           - "Manager IP: {{ swarm_manager_ip | default('NOT_SET') }}"
@@ -59,13 +90,13 @@
           - "Is worker: {{ inventory_hostname in groups['workers'] }}"
       when: inventory_hostname in groups['workers']
 
-    - name: Check current swarm status on workers
+    - name: 🔍 Check current swarm status on workers
       shell: docker info | grep "Swarm:" | awk '{print $2}'
       register: current_swarm_status
       ignore_errors: yes
       when: inventory_hostname in groups['workers']
 
-    - name: Join swarm as worker
+    - name: 🤝 Join swarm as worker
       community.docker.docker_swarm:
         state: join
         join_token: "{{ swarm_worker_token }}"
@@ -81,7 +112,7 @@
         - swarm_manager_ip != ""
         - current_swarm_status.stdout != "active"
 
-    - name: Display join result for workers
+    - name: 📊 Display join result for workers
       debug:
         msg:
           - "Current swarm status: {{ current_swarm_status.stdout | default('unknown') }}"
@@ -92,19 +123,20 @@
 # Final verification and deployment
 - hosts: managers
   become: true
+  gather_facts: no
   tasks:
-    - name: Wait for workers to join
+    - name: ⏳ Wait for workers to join
       pause:
         seconds: 10
 
-    - name: Verify swarm cluster
+    - name: ✅ Verify swarm cluster
       shell: docker node ls
       register: swarm_nodes
 
-    - name: Display swarm cluster status
+    - name: 📋 Display swarm cluster status
       debug:
         msg: "{{ swarm_nodes.stdout_lines }}"
 
-    - name: Deploy application stack
+    - name: 🚀 Deploy application stack
       include_role:
         name: deploy_stack

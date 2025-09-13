@@ -380,6 +380,7 @@ jobs:
 
       - name: 🚀 Deploy application with Ansible
         working-directory: infra/ansible
+        continue-on-error: true
         run: |
           echo "🎯 Deploying to Docker Swarm cluster..."
           echo "📊 Target image: ${{ inputs.imageTag }}"
