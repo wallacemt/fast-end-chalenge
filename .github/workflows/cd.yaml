@@ -105,7 +105,7 @@ jobs:
     name: "🏗️ Infrastructure Provisioning"
     runs-on: ubuntu-latest
     needs: preparation
-    if: needs.preparation.outputs.terraform-changed == 'true' || inputs.terraform-apply == 'true'
+    if: needs.preparation.outputs.terraform-changed == 'true' && inputs.terraform-apply == 'true'
     outputs:
       manager-ip: ${{ steps.tf-output.outputs.manager-ip }}
       worker1-ip: ${{ steps.tf-output.outputs.worker1-ip }}
