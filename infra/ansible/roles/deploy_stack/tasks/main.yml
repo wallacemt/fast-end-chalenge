@@ -2,13 +2,25 @@
   file:
     path: /tmp
     state: directory
-    mode: '0755'
+    mode: "0755"
 
 - name: Copy docker-compose stack to manager
   copy:
     src: ../../../files/docker-compose.yml
     dest: /tmp/docker-compose.yml
-    mode: '0644'
+    mode: "0644"
+
+- name: Copy prometheus configuration to manager
+  copy:
+    src: ../../../files/prometheus.yaml
+    dest: /tmp/prometheus.yaml
+    mode: "0644"
+
+- name: Copy grafana datasources configuration to manager
+  copy:
+    src: ../../../files/grafana-datasources.yml
+    dest: /tmp/grafana-datasources.yml
+    mode: "0644"
 
 - name: Deploy stack
   command: docker stack deploy -c /tmp/docker-compose.yml fast-end-ch

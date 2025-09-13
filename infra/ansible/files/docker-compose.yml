@@ -7,9 +7,9 @@ networks:
 
 configs:
   prometheus_config:
-    file: ./prometheus.yaml
+    file: /tmp/prometheus.yaml
   grafana_datasources:
-    file: ./grafana-datasources.yml
+    file: /tmp/grafana-datasources.yml
 
 services:
   app:
