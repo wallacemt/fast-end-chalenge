@@ -85,7 +85,21 @@ jobs:
           name: terraform-plan
           path: infra/terraform/tfplan
           retention-days: 1
+      - name: 🔍 Get current infrastructure IPs
+        id: tf-output
+        working-directory: infra/terraform
+        run: |
+          terraform output -json > tf.json
+          manager_ip=$(jq -r '.swarm_public_ips.value[0]' tf.json)
+          worker1_ip=$(jq -r '.swarm_public_ips.value[1]' tf.json)
+          worker2_ip=$(jq -r '.swarm_public_ips.value[2]' tf.json)
 
+          echo "manager-ip=$manager_ip" >> $GITHUB_OUTPUT
+          echo "worker1-ip=$worker1_ip" >> $GITHUB_OUTPUT
+          echo "worker2-ip=$worker2_ip" >> $GITHUB_OUTPUT
+
+          echo "🖥️ Manager IP: $manager_ip"
+          echo "👥 Worker IPs: $worker1_ip, $worker2_ip"
   terraform-apply:
     name: "🏗️ Infrastructure Provisioning"
     runs-on: ubuntu-latest
@@ -133,7 +147,6 @@ jobs:
           echo "🔄 Applying infrastructure changes..."
           terraform apply -auto-approve tfplan
 
-   
   ansible-preparation:
     name: "📋 Ansible Preparation"
     runs-on: ubuntu-latest
@@ -141,23 +154,6 @@ jobs:
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
-
-      - name: 🔍 Get current infrastructure IPs
-        id: tf-output
-        working-directory: infra/terraform
-        run: |
-          terraform output -json > tf.json
-          manager_ip=$(jq -r '.swarm_public_ips.value[0]' tf.json)
-          worker1_ip=$(jq -r '.swarm_public_ips.value[1]' tf.json)
-          worker2_ip=$(jq -r '.swarm_public_ips.value[2]' tf.json)
-
-          echo "manager-ip=$manager_ip" >> $GITHUB_OUTPUT
-          echo "worker1-ip=$worker1_ip" >> $GITHUB_OUTPUT
-          echo "worker2-ip=$worker2_ip" >> $GITHUB_OUTPUT
-
-          echo "🖥️ Manager IP: $manager_ip"
-          echo "👥 Worker IPs: $worker1_ip, $worker2_ip"
-        
       - name: � Setup Python
         uses: actions/setup-python@v4
         with:
@@ -232,6 +228,21 @@ jobs:
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
+
+      - name: 🔍 Determine IPs to use
+        id: determine-ips
+        run: |
+          if [ "${{ needs.terraform-apply.result }}" = "success" ]; then
+            echo "manager-ip=${{ needs.terraform-apply.outputs.manager-ip }}" >> $GITHUB_OUTPUT
+            echo "worker1-ip=${{ needs.terraform-apply.outputs.worker1-ip }}" >> $GITHUB_OUTPUT
+            echo "worker2-ip=${{ needs.terraform-apply.outputs.worker2-ip }}" >> $GITHUB_OUTPUT
+            echo "🔄 Using updated IPs from Terraform apply"
+          else
+            echo "manager-ip=${{ needs.preparation.outputs.manager-ip }}" >> $GITHUB_OUTPUT
+            echo "worker1-ip=${{ needs.preparation.outputs.worker1-ip }}" >> $GITHUB_OUTPUT
+            echo "worker2-ip=${{ needs.preparation.outputs.worker2-ip }}" >> $GITHUB_OUTPUT
+            echo "♻️ Using existing IPs from preparation"
+          fi
 
       - name: 📝 Generate Ansible inventory
         run: |
