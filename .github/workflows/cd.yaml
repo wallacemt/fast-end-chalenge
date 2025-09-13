@@ -43,7 +43,17 @@ jobs:
         with:
           terraform_wrapper: false
 
-      - name: 🔑 Setup SSH public key
+      - name: � Cache Terraform providers
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.terraform.d/plugin-cache
+            infra/terraform/.terraform
+          key: terraform-${{ runner.os }}-${{ hashFiles('infra/terraform/*.tf') }}
+          restore-keys: |
+            terraform-${{ runner.os }}-
+
+      - name: �🔑 Setup SSH public key
         run: |
           echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/id_rsa.pub
           chmod 644 /tmp/id_rsa.pub
@@ -174,12 +184,61 @@ jobs:
       - name: 📥 Checkout code
         uses: actions/checkout@v4
 
-      - name: 📦 Install Ansible and dependencies
+      - name: � Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: �📦 Cache Python dependencies
+        uses: actions/cache@v3
+        id: cache-python
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.local/lib/python3.11/site-packages
+          key: ansible-deps-${{ runner.os }}-py3.11-${{ hashFiles('**/requirements.txt') }}-v1
+          restore-keys: |
+            ansible-deps-${{ runner.os }}-py3.11-
+            ansible-deps-${{ runner.os }}-
+
+      - name: 📦 Cache Ansible collections
+        uses: actions/cache@v3
+        id: cache-ansible
+        with:
+          path: |
+            ~/.ansible/collections
+            ~/.ansible/galaxy_cache
+          key: ansible-collections-${{ runner.os }}-v1
+          restore-keys: |
+            ansible-collections-${{ runner.os }}-
+
+      - name: 🚀 Install Ansible and dependencies (cached)
+        if: steps.cache-python.outputs.cache-hit != 'true'
         run: |
+          echo "📦 Installing fresh dependencies..."
           sudo apt-get update -qq
-          sudo apt-get install -qqy ansible python3-boto3 python3-pip
-          pip3 install --no-cache-dir docker
+          sudo apt-get install -qqy ansible python3-boto3
+          pip3 install --user -r requirements.txt
+
+      - name: ✅ Use cached dependencies
+        if: steps.cache-python.outputs.cache-hit == 'true'
+        run: |
+          echo "⚡ Using cached Python dependencies!"
+          # Ensure ansible is in PATH
+          export PATH="$HOME/.local/bin:$PATH"
+          ansible --version
+
+      - name: 🎭 Install Ansible collections (cached)
+        if: steps.cache-ansible.outputs.cache-hit != 'true'
+        run: |
+          echo "📦 Installing fresh Ansible collections..."
           ansible-galaxy collection install --no-cache community.docker
+
+      - name: ✅ Use cached collections
+        if: steps.cache-ansible.outputs.cache-hit == 'true'
+        run: |
+          echo "⚡ Using cached Ansible collections!"
+          ansible-galaxy collection list community.docker
 
       - name: 📤 Upload Ansible files
         uses: actions/upload-artifact@v4
@@ -230,7 +289,7 @@ jobs:
           echo "📋 Generated inventory:"
           cat infra/ansible/inventory.ini
 
-      - name: 🔑 Setup SSH configuration
+      - name: �🔑 Setup SSH configuration
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key

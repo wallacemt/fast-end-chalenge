@@ -3,29 +3,30 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: "blackbox"
+  - job_name: "blackbox-monitoring"
     metrics_path: /probe
     params:
       module: [http_2xx]
     static_configs:
       - targets:
-          - http://app-container:80/
+          - http://app:80/
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target
       - source_labels: [__param_target]
         target_label: instance
       - target_label: __address__
-        replacement: blackbox-exporter:9115
+        replacement: blackbox:9115
 
   - job_name: "prometheus"
     static_configs:
-      - targets: ["prometheus:9090"]
+      - targets: ["localhost:9090"]
 
   - job_name: "blackbox-exporter"
     static_configs:
-      - targets: ["blackbox-exporter:9115"]
+      - targets: ["blackbox:9115"]
 
-  - job_name: "app"
+  - job_name: "app-monitoring"
     static_configs:
-      - targets: ["app-container:80"]
+      - targets: ["app:80"]
+    scrape_interval: 30s
