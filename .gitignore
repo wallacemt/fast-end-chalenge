@@ -140,3 +140,4 @@ crash.*.log
 *.tfplan
 .terraformrc
 terraform.rc
+inventory.ini
