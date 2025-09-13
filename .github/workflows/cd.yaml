@@ -11,7 +11,62 @@ on:
           - prod
       imageTag:
         required: true
-        description: "Deployment image tag"
+        description: "Deployment im          echo "📋 Generated inventory:"
+          cat infra/ansible/inventory.ini
+
+      - name: 🔧 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Cache Python dependencies
+        uses: actions/cache@v3
+        id: cache-python-deploy
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.local/lib/python3.11/site-packages
+          key: ansible-deps-${{ runner.os }}-py3.11-${{ hashFiles('**/requirements.txt') }}-v1
+          restore-keys: |
+            ansible-deps-${{ runner.os }}-py3.11-
+            ansible-deps-${{ runner.os }}-
+
+      - name: 📦 Cache Ansible collections
+        uses: actions/cache@v3
+        id: cache-ansible-deploy
+        with:
+          path: |
+            ~/.ansible/collections
+            ~/.ansible/galaxy_cache
+          key: ansible-collections-${{ runner.os }}-v1
+          restore-keys: |
+            ansible-collections-${{ runner.os }}-
+
+      - name: 🚀 Install Ansible and dependencies (if not cached)
+        if: steps.cache-python-deploy.outputs.cache-hit != 'true'
+        run: |
+          echo "📦 Installing fresh dependencies..."
+          sudo apt-get update -qq
+          sudo apt-get install -qqy ansible python3-boto3
+          pip3 install --user -r requirements.txt
+
+      - name: ⚡ Setup cached environment
+        run: |
+          echo "🔧 Setting up environment..."
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          
+          # Verify installations
+          ansible --version || echo "Ansible not in PATH, using system version"
+          python3 -c "import docker; print('Docker SDK OK')" || echo "Docker SDK not available"
+
+      - name: 🎭 Install Ansible collections (if not cached)
+        if: steps.cache-ansible-deploy.outputs.cache-hit != 'true'
+        run: |
+          echo "📦 Installing fresh Ansible collections..."
+          ansible-galaxy collection install --no-cache community.docker
+
+      - name: 🔑 Setup SSH configurationtag"
         default: "latest"
       terraform-apply:
         required: true
@@ -76,8 +131,20 @@ jobs:
         working-directory: infra/terraform
         continue-on-error: true
         run: |
-          terraform plan -detailed-exitcode -var="key_name=deployer" -var="public_key_path=/tmp/id_rsa.pub" -out=tfplan
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          terraform plan -detailed-exitcode \
+            -var="key_name=deployer" \
+            -var="public_key_path=/tmp/id_rsa.pub" \
+            -out=tfplan
+          plan_exit_code=$?
+          echo "plan-exit-code=$plan_exit_code" >> $GITHUB_OUTPUT
+          
+          if [ $plan_exit_code -eq 2 ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          elif [ "${{ steps.tf-import.outputs.import-exit-code }}" = "2" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: 📤 Upload Terraform plan
         uses: actions/upload-artifact@v4
@@ -90,14 +157,24 @@ jobs:
         working-directory: infra/terraform
         run: |
           terraform output -json > tf.json
+          cat tf.json
+          
           manager_ip=$(jq -r '.swarm_public_ips.value[0]' tf.json)
           worker1_ip=$(jq -r '.swarm_public_ips.value[1]' tf.json)
           worker2_ip=$(jq -r '.swarm_public_ips.value[2]' tf.json)
-
+          
+          # Validate IPs
+          if [ -z "$manager_ip" ] || [ "$manager_ip" = "null" ]; then
+            echo "❌ Error: Cannot get Manager IP from Terraform output"
+            echo "Terraform output content:"
+            cat tf.json
+            exit 1
+          fi
+          
           echo "manager-ip=$manager_ip" >> $GITHUB_OUTPUT
           echo "worker1-ip=$worker1_ip" >> $GITHUB_OUTPUT
           echo "worker2-ip=$worker2_ip" >> $GITHUB_OUTPUT
-
+          
           echo "🖥️ Manager IP: $manager_ip"
           echo "👥 Worker IPs: $worker1_ip, $worker2_ip"
   terraform-apply:
@@ -146,6 +223,22 @@ jobs:
         run: |
           echo "🔄 Applying infrastructure changes..."
           terraform apply -auto-approve tfplan
+
+      - name: 🔍 Get updated infrastructure IPs
+        id: tf-output
+        working-directory: infra/terraform
+        run: |
+          terraform output -json > tf.json
+          manager_ip=$(jq -r '.swarm_public_ips.value[0]' tf.json)
+          worker1_ip=$(jq -r '.swarm_public_ips.value[1]' tf.json)
+          worker2_ip=$(jq -r '.swarm_public_ips.value[2]' tf.json)
+          
+          echo "manager-ip=$manager_ip" >> $GITHUB_OUTPUT
+          echo "worker1-ip=$worker1_ip" >> $GITHUB_OUTPUT
+          echo "worker2-ip=$worker2_ip" >> $GITHUB_OUTPUT
+          
+          echo "🖥️ Updated Manager IP: $manager_ip"
+          echo "👥 Updated Worker IPs: $worker1_ip, $worker2_ip"
 
   ansible-preparation:
     name: "📋 Ansible Preparation"
@@ -233,16 +326,41 @@ jobs:
         id: determine-ips
         run: |
           if [ "${{ needs.terraform-apply.result }}" = "success" ]; then
-            echo "manager-ip=${{ needs.terraform-apply.outputs.manager-ip }}" >> $GITHUB_OUTPUT
-            echo "worker1-ip=${{ needs.terraform-apply.outputs.worker1-ip }}" >> $GITHUB_OUTPUT
-            echo "worker2-ip=${{ needs.terraform-apply.outputs.worker2-ip }}" >> $GITHUB_OUTPUT
+            manager_ip="${{ needs.terraform-apply.outputs.manager-ip }}"
+            worker1_ip="${{ needs.terraform-apply.outputs.worker1-ip }}"
+            worker2_ip="${{ needs.terraform-apply.outputs.worker2-ip }}"
             echo "🔄 Using updated IPs from Terraform apply"
           else
-            echo "manager-ip=${{ needs.preparation.outputs.manager-ip }}" >> $GITHUB_OUTPUT
-            echo "worker1-ip=${{ needs.preparation.outputs.worker1-ip }}" >> $GITHUB_OUTPUT
-            echo "worker2-ip=${{ needs.preparation.outputs.worker2-ip }}" >> $GITHUB_OUTPUT
+            manager_ip="${{ needs.preparation.outputs.manager-ip }}"
+            worker1_ip="${{ needs.preparation.outputs.worker1-ip }}"
+            worker2_ip="${{ needs.preparation.outputs.worker2-ip }}"
             echo "♻️ Using existing IPs from preparation"
           fi
+          
+          # Validate IPs are not empty or null
+          if [ -z "$manager_ip" ] || [ "$manager_ip" = "null" ]; then
+            echo "❌ Error: Manager IP is empty or null"
+            exit 1
+          fi
+          
+          if [ -z "$worker1_ip" ] || [ "$worker1_ip" = "null" ]; then
+            echo "❌ Error: Worker1 IP is empty or null"
+            exit 1
+          fi
+          
+          if [ -z "$worker2_ip" ] || [ "$worker2_ip" = "null" ]; then
+            echo "❌ Error: Worker2 IP is empty or null"
+            exit 1
+          fi
+          
+          echo "manager-ip=$manager_ip" >> $GITHUB_OUTPUT
+          echo "worker1-ip=$worker1_ip" >> $GITHUB_OUTPUT
+          echo "worker2-ip=$worker2_ip" >> $GITHUB_OUTPUT
+          
+          echo "✅ Validated IPs:"
+          echo "   Manager: $manager_ip"
+          echo "   Worker1: $worker1_ip"
+          echo "   Worker2: $worker2_ip"
 
       - name: 📝 Generate Ansible inventory
         run: |
