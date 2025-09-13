@@ -62,14 +62,29 @@ jobs:
         working-directory: infra/terraform
         run: terraform init
 
-      - name: 📦 Import existing resources
+      - name: � Sync Terraform state with AWS reality
+        working-directory: infra/terraform
+        run: |
+          echo "🔄 Refreshing Terraform state to match AWS reality..."
+          terraform refresh -var="key_name=deployer" -var="public_key_path=/tmp/id_rsa.pub"
+
+      - name: �📦 Import existing resources
         id: tf-import
         working-directory: infra/terraform
         continue-on-error: true
         run: |
           chmod +x import_existing.sh
-          ./import_existing.sh || echo "Some resources may not exist yet - continuing..."
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          ./import_existing.sh
+          import_exit_code=$?
+          echo "import-exit-code=$import_exit_code" >> $GITHUB_OUTPUT
+
+          # If import was successful, refresh state to get current IPs
+          if [ $import_exit_code -eq 0 ]; then
+            echo "✅ Resources imported successfully, refreshing state..."
+            terraform refresh -var="key_name=deployer" -var="public_key_path=/tmp/id_rsa.pub"
+          else
+            echo "⚠️ Import had issues (exit code: $import_exit_code)"
+          fi
 
       - name: 📋 Terraform Plan
         id: tf-plan
@@ -101,27 +116,56 @@ jobs:
         id: tf-output
         working-directory: infra/terraform
         run: |
+          echo "🔍 Getting IPs from Terraform state..."
           terraform output -json > tf.json
           cat tf.json
-          
+
           manager_ip=$(jq -r '.swarm_public_ips.value[0]' tf.json)
           worker1_ip=$(jq -r '.swarm_public_ips.value[1]' tf.json)
           worker2_ip=$(jq -r '.swarm_public_ips.value[2]' tf.json)
-          
-          # Validate IPs
-          if [ -z "$manager_ip" ] || [ "$manager_ip" = "null" ]; then
-            echo "❌ Error: Cannot get Manager IP from Terraform output"
-            echo "Terraform output content:"
+
+          # If Terraform doesn't have the right IPs, get them directly from AWS
+          if [ -z "$manager_ip" ] || [ "$manager_ip" = "null" ] || [ "$manager_ip" = "" ]; then
+            echo "⚠️ Terraform state missing IPs, querying AWS directly..."
+            
+            # Get IPs directly from AWS using instance tags
+            manager_ip=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=swarm-node-0" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' \
+              --output text 2>/dev/null || echo "")
+              
+            worker1_ip=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=swarm-node-1" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' \
+              --output text 2>/dev/null || echo "")
+              
+            worker2_ip=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=swarm-node-2" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' \
+              --output text 2>/dev/null || echo "")
+              
+            echo "🔍 IPs from AWS API:"
+            echo "   Manager: $manager_ip"
+            echo "   Worker1: $worker1_ip" 
+            echo "   Worker2: $worker2_ip"
+          fi
+
+          # Final validation
+          if [ -z "$manager_ip" ] || [ "$manager_ip" = "null" ] || [ "$manager_ip" = "None" ]; then
+            echo "❌ Error: Cannot get Manager IP from Terraform or AWS"
+            echo "Terraform output:"
             cat tf.json
             exit 1
           fi
-          
+
           echo "manager-ip=$manager_ip" >> $GITHUB_OUTPUT
           echo "worker1-ip=$worker1_ip" >> $GITHUB_OUTPUT
           echo "worker2-ip=$worker2_ip" >> $GITHUB_OUTPUT
-          
-          echo "🖥️ Manager IP: $manager_ip"
-          echo "👥 Worker IPs: $worker1_ip, $worker2_ip"
+
+          echo "✅ Final IPs:"
+          echo "   Manager: $manager_ip"
+          echo "   Worker1: $worker1_ip"
+          echo "   Worker2: $worker2_ip"
   terraform-apply:
     name: "🏗️ Infrastructure Provisioning"
     runs-on: ubuntu-latest
@@ -281,27 +325,27 @@ jobs:
             worker2_ip="${{ needs.preparation.outputs.worker2-ip }}"
             echo "♻️ Using existing IPs from preparation"
           fi
-          
+
           # Validate IPs are not empty or null
           if [ -z "$manager_ip" ] || [ "$manager_ip" = "null" ]; then
             echo "❌ Error: Manager IP is empty or null"
             exit 1
           fi
-          
+
           if [ -z "$worker1_ip" ] || [ "$worker1_ip" = "null" ]; then
             echo "❌ Error: Worker1 IP is empty or null"
             exit 1
           fi
-          
+
           if [ -z "$worker2_ip" ] || [ "$worker2_ip" = "null" ]; then
             echo "❌ Error: Worker2 IP is empty or null"
             exit 1
           fi
-          
+
           echo "manager-ip=$manager_ip" >> $GITHUB_OUTPUT
           echo "worker1-ip=$worker1_ip" >> $GITHUB_OUTPUT
           echo "worker2-ip=$worker2_ip" >> $GITHUB_OUTPUT
-          
+
           echo "✅ Validated IPs:"
           echo "   Manager: $manager_ip"
           echo "   Worker1: $worker1_ip"
