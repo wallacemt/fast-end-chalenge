@@ -248,13 +248,7 @@ jobs:
           echo "🎯 Deploying to Docker Swarm cluster..."
           echo "📊 Target image: ${{ inputs.imageTag }}"
 
-          ansible-playbook \
-            -i inventory.ini \
-            playbook.yml \
-            --private-key ~/.ssh/deploy_key \
-            --ssh-common-args='-o StrictHostKeyChecking=no' \
-            --extra-vars "app_image_tag=${{ inputs.imageTag }}" \
-            -v
+          ansible-playbook -i inventory.ini playbook.yml --private-key ~/.ssh/deploy_key --ssh-common-args='-o StrictHostKeyChecking=no'
 
       - name: ✅ Deployment Summary
         run: |
