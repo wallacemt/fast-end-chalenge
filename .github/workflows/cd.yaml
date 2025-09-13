@@ -13,116 +13,264 @@ on:
         required: true
         description: "Deployment image tag"
         default: "latest"
-      terraform-aply:
+      terraform-apply:
         required: true
         description: "Apply Terraform changes"
         default: "false"
 
 jobs:
-  deploy:
+  preparation:
+    name: "🔧 Preparation & Validation"
     runs-on: ubuntu-latest
+    outputs:
+      manager-ip: ${{ steps.tf-output.outputs.manager-ip }}
+      worker1-ip: ${{ steps.tf-output.outputs.worker1-ip }}
+      worker2-ip: ${{ steps.tf-output.outputs.worker2-ip }}
+      terraform-changed: ${{ steps.tf-plan.outputs.changed }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Configure AWS credentials
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      # Instala Terraform
-      - name: Setup Terraform
+      - name: 🛠️ Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
 
-      - name: Terraform Init
+      - name: 🔑 Setup SSH public key
+        run: |
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/id_rsa.pub
+          chmod 644 /tmp/id_rsa.pub
+
+      - name: 🚀 Terraform Init
         working-directory: infra/terraform
         run: terraform init
 
-      # Create SSH public key file from secret
-      - name: Setup SSH public key
-        run: |
-          echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/id_rsa.pub
-          sudo chmod 644 /tmp/id_rsa.pub
-
-      # Import existing resources to avoid duplicates
-      - name: Import existing resources
+      - name: 📦 Import existing resources
         id: tf-import
         working-directory: infra/terraform
+        continue-on-error: true
         run: |
           chmod +x import_existing.sh
-          ./import_existing.sh || echo "Some resources may not exist yet - continuing..."
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          ./import_existing.sh
+          echo "import-exit-code=$?" >> $GITHUB_OUTPUT
 
-      # Check if there are changes to apply
-      - name: Check Terraform changes
+      - name: 📋 Terraform Plan
         id: tf-plan
         working-directory: infra/terraform
         run: |
-          terraform plan -detailed-exitcode -var="key_name=deployer" -var="public_key_path=/tmp/id_rsa.pub" -out=tfplan
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          terraform plan -detailed-exitcode \
+            -var="key_name=deployer" \
+            -var="public_key_path=/tmp/id_rsa.pub" \
+            -out=tfplan
+          plan_exit_code=$?
+          echo "plan-exit-code=$plan_exit_code" >> $GITHUB_OUTPUT
 
-      # Apply Terraform only if there are changes
-      - name: Terraform Apply
-        if: inputs.terraform-aply == 'true' || steps.tf-import.outputs.exit_code == '2' || steps.tf-plan.outputs.exit_code == '2' 
-        working-directory: infra/terraform
-        run: |
-          echo "Changes detected, applying Terraform..."
-          terraform apply -auto-approve tfplan
+          if [ $plan_exit_code -eq 2 ] || [ "${{ steps.tf-import.outputs.import-exit-code }}" = "2" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
 
-      # Show message if no changes
-      - name: No changes needed
-        if: steps.tf-plan.outputs.exit_code == '0'
-        run: |
-          echo "✅ No changes detected. All infrastructure is up to date!"
-          echo "🎯 Reusing existing EC2 instances, Security Group, and Key Pair"
+      - name: 📤 Upload Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: infra/terraform/tfplan
+          retention-days: 1
 
-      # Recupera IPs dos nodes
-      - name: Get Terraform outputs
-        id: tf-out
+      - name: 🔍 Get current infrastructure IPs
+        id: tf-output
         working-directory: infra/terraform
         run: |
           terraform output -json > tf.json
-          cat tf.json
-          echo "MANAGER_IP=$(jq -r '.swarm_public_ips.value[0]' tf.json)" >> $GITHUB_ENV
-          echo "WORKER1_IP=$(jq -r '.swarm_public_ips.value[1]' tf.json)" >> $GITHUB_ENV
-          echo "WORKER2_IP=$(jq -r '.swarm_public_ips.value[2]' tf.json)" >> $GITHUB_ENV
+          manager_ip=$(jq -r '.swarm_public_ips.value[0]' tf.json)
+          worker1_ip=$(jq -r '.swarm_public_ips.value[1]' tf.json)
+          worker2_ip=$(jq -r '.swarm_public_ips.value[2]' tf.json)
 
-      - name: Validate IPs
+          echo "manager-ip=$manager_ip" >> $GITHUB_OUTPUT
+          echo "worker1-ip=$worker1_ip" >> $GITHUB_OUTPUT
+          echo "worker2-ip=$worker2_ip" >> $GITHUB_OUTPUT
+
+          echo "🖥️ Manager IP: $manager_ip"
+          echo "👥 Worker IPs: $worker1_ip, $worker2_ip"
+
+  terraform-apply:
+    name: "🏗️ Infrastructure Provisioning"
+    runs-on: ubuntu-latest
+    needs: preparation
+    if: needs.preparation.outputs.terraform-changed == 'true' || inputs.terraform-apply == 'true'
+    outputs:
+      manager-ip: ${{ steps.tf-output.outputs.manager-ip }}
+      worker1-ip: ${{ steps.tf-output.outputs.worker1-ip }}
+      worker2-ip: ${{ steps.tf-output.outputs.worker2-ip }}
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔐 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: 🛠️ Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: 🔑 Setup SSH public key
         run: |
-          if [ -z "$MANAGER_IP" ] || [ -z "$WORKER1_IP" ] || [ -z "$WORKER2_IP" ]; then
-            echo "Error: Failed to extract IPs from Terraform output"
-            exit 1
-          fi
-          echo "Manager IP: $MANAGER_IP"
-          echo "Worker IPs: $WORKER1_IP, $WORKER2_IP"
-      # Instala Ansible
-      - name: Install Ansible
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/id_rsa.pub
+          chmod 644 /tmp/id_rsa.pub
+
+      - name: 🚀 Terraform Init
+        working-directory: infra/terraform
+        run: terraform init
+
+      - name: 📥 Download Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan
+          path: infra/terraform/
+
+      - name: ✅ Apply Terraform changes
+        working-directory: infra/terraform
+        run: |
+          echo "🔄 Applying infrastructure changes..."
+          terraform apply -auto-approve tfplan
+
+      - name: 🔍 Get updated infrastructure IPs
+        id: tf-output
+        working-directory: infra/terraform
+        run: |
+          terraform output -json > tf.json
+          manager_ip=$(jq -r '.swarm_public_ips.value[0]' tf.json)
+          worker1_ip=$(jq -r '.swarm_public_ips.value[1]' tf.json)
+          worker2_ip=$(jq -r '.swarm_public_ips.value[2]' tf.json)
+
+          echo "manager-ip=$manager_ip" >> $GITHUB_OUTPUT
+          echo "worker1-ip=$worker1_ip" >> $GITHUB_OUTPUT
+          echo "worker2-ip=$worker2_ip" >> $GITHUB_OUTPUT
+
+          echo "🖥️ Updated Manager IP: $manager_ip"
+          echo "👥 Updated Worker IPs: $worker1_ip, $worker2_ip"
+
+  ansible-preparation:
+    name: "📋 Ansible Preparation"
+    runs-on: ubuntu-latest
+    needs: preparation
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📦 Install Ansible and dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qqy ansible python3-boto3 python3-pip
+          pip3 install --no-cache-dir docker
+          ansible-galaxy collection install --no-cache community.docker
+
+      - name: 📤 Upload Ansible files
+        uses: actions/upload-artifact@v4
+        with:
+          name: ansible-config
+          path: infra/ansible/
+          retention-days: 1
+
+  application-deployment:
+    name: "🚀 Application Deployment"
+    runs-on: ubuntu-latest
+    needs:
+      - preparation
+      - ansible-preparation
+      - terraform-apply
+    if: always() && (needs.terraform-apply.result == 'success' || (needs.terraform-apply.result == 'skipped' && needs.preparation.result == 'success'))
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Ansible configuration
+        uses: actions/download-artifact@v4
+        with:
+          name: ansible-config
+          path: infra/ansible/
+
+      - name: 📦 Install Ansible and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ansible python3-boto3
+          sudo apt-get install -y ansible python3-boto3 python3-pip
+          pip3 install docker
           ansible-galaxy collection install community.docker
 
-      # Prepara inventário dinâmico
-      - name: Generate Ansible inventory
+      - name: 🔍 Determine IPs to use
+        id: determine-ips
         run: |
-          echo "[managers]" > infra/ansible/inventory.ini
-          echo "manager ansible_host=${{ env.MANAGER_IP }} ansible_user=ubuntu" >> infra/ansible/inventory.ini
-          echo "[workers]" >> infra/ansible/inventory.ini
-          echo "worker1 ansible_host=${{ env.WORKER1_IP }} ansible_user=ubuntu" >> infra/ansible/inventory.ini
-          echo "worker2 ansible_host=${{ env.WORKER2_IP }} ansible_user=ubuntu" >> infra/ansible/inventory.ini
+          if [ "${{ needs.terraform-apply.result }}" = "success" ]; then
+            echo "manager-ip=${{ needs.terraform-apply.outputs.manager-ip }}" >> $GITHUB_OUTPUT
+            echo "worker1-ip=${{ needs.terraform-apply.outputs.worker1-ip }}" >> $GITHUB_OUTPUT
+            echo "worker2-ip=${{ needs.terraform-apply.outputs.worker2-ip }}" >> $GITHUB_OUTPUT
+            echo "🔄 Using updated IPs from Terraform apply"
+          else
+            echo "manager-ip=${{ needs.preparation.outputs.manager-ip }}" >> $GITHUB_OUTPUT
+            echo "worker1-ip=${{ needs.preparation.outputs.worker1-ip }}" >> $GITHUB_OUTPUT
+            echo "worker2-ip=${{ needs.preparation.outputs.worker2-ip }}" >> $GITHUB_OUTPUT
+            echo "♻️ Using existing IPs from preparation"
+          fi
 
-      # Prepara chave SSH para conectar nas EC2
-      - name: Setup SSH key
+      - name: 📝 Generate Ansible inventory
+        run: |
+          mkdir -p infra/ansible
+          cat > infra/ansible/inventory.ini << EOF
+          [managers]
+          manager ansible_host=${{ steps.determine-ips.outputs.manager-ip }} ansible_user=ubuntu
+
+          [workers]
+          worker1 ansible_host=${{ steps.determine-ips.outputs.worker1-ip }} ansible_user=ubuntu
+          worker2 ansible_host=${{ steps.determine-ips.outputs.worker2-ip }} ansible_user=ubuntu
+          EOF
+
+          echo "📋 Generated inventory:"
+          cat infra/ansible/inventory.ini
+
+      - name: 🔑 Setup SSH configuration
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ env.MANAGER_IP }} >> ~/.ssh/known_hosts
-          ssh-keyscan -H ${{ env.WORKER1_IP }} >> ~/.ssh/known_hosts
-          ssh-keyscan -H ${{ env.WORKER2_IP }} >> ~/.ssh/known_hosts
 
-      # Roda Ansible playbook
-      - name: Run Ansible
+          # Add all IPs to known_hosts
+          ssh-keyscan -H ${{ steps.determine-ips.outputs.manager-ip }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H ${{ steps.determine-ips.outputs.worker1-ip }} >> ~/.ssh/known_hosts
+          ssh-keyscan -H ${{ steps.determine-ips.outputs.worker2-ip }} >> ~/.ssh/known_hosts
+
+      - name: 🚀 Deploy application with Ansible
         working-directory: infra/ansible
         run: |
-          ansible-playbook -i inventory.ini playbook.yml --private-key ~/.ssh/deploy_key --ssh-common-args='-o StrictHostKeyChecking=no'
+          echo "🎯 Deploying to Docker Swarm cluster..."
+          echo "📊 Target image: ${{ inputs.imageTag }}"
+
+          ansible-playbook \
+            -i inventory.ini \
+            playbook.yml \
+            --private-key ~/.ssh/deploy_key \
+            --ssh-common-args='-o StrictHostKeyChecking=no' \
+            --extra-vars "app_image_tag=${{ inputs.imageTag }}" \
+            -v
+
+      - name: ✅ Deployment Summary
+        run: |
+          echo "🎉 Deployment completed successfully!"
+          echo "🌐 Application deployed to:"
+          echo "   - Manager: http://${{ steps.determine-ips.outputs.manager-ip }}"
+          echo "   - Worker1: http://${{ steps.determine-ips.outputs.worker1-ip }}"
+          echo "   - Worker2: http://${{ steps.determine-ips.outputs.worker2-ip }}"
+          echo "🏷️ Image tag: ${{ inputs.imageTag }}"
+          echo "🏗️ Infrastructure: ${{ needs.terraform-apply.result == 'success' && 'Updated' || 'Reused existing' }}"
