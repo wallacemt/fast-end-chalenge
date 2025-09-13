@@ -156,6 +156,7 @@ jobs:
 
       - name: ✅ Apply Terraform changes
         working-directory: infra/terraform
+        continue-on-error: true
         run: |
           echo "🔄 Applying infrastructure changes..."
           terraform apply -auto-approve tfplan
