@@ -15,7 +15,7 @@ services:
   app:
     image: wallacestm/fast-end-ch:latest
     ports:
-      - "80:80"
+      - "8080:80"
     networks:
       - monitoring
     deploy:
@@ -33,6 +33,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 40s
 
   blackbox:
     image: prom/blackbox-exporter:latest
