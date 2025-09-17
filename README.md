@@ -483,14 +483,9 @@ chmod 600 infra/keys/deploy_key
 - Containers executando como non-root
 
 ---
-
 ## 👥 Contribuidores
-
-**Wallace Medeiros** - _Engenheiro de Plataforma_
-
 - GitHub: [@wallacemt](https://github.com/wallacemt)
 - LinkedIn: [Wallace Santana](https://linkedin.com/in/wallacemt)
-
 ---
 
 ## 🎓 Agradecimentos
